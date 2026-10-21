@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#000000">
+<title>空間偏好 AR：視野版</title>
+<style>
+  :root { --fg:#fff; --dim:rgba(255,255,255,.62); --line:rgba(255,255,255,.28); --bg:rgba(0,0,0,.55); }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; height:100%; background:#000; color:var(--fg); overflow:hidden;
+    font-family: -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+    touch-action: none; overscroll-behavior: none; -webkit-user-select:none; user-select:none; }
+  #view { position:fixed; inset:0; width:100%; height:100%; display:block; }
+  #cam { position:fixed; left:0; top:0; width:1px; height:1px; opacity:0; pointer-events:none; }
+
+  #bar[hidden] { display:none; }
+  #bar { position:fixed; left:0; right:0; bottom:0; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;
+    padding:10px 12px calc(10px + env(safe-area-inset-bottom, 0px)); z-index:5; }
+  .btn { appearance:none; border:1px solid var(--line); background:var(--bg); color:var(--fg);
+    font:500 14px/1 inherit; padding:12px 14px; border-radius:999px; min-height:44px; min-width:44px;
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  .btn:active, .btn.on { background:#fff; color:#000; }
+
+  #intro { position:fixed; inset:0; z-index:10; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:14px; padding:24px 24px calc(24px + env(safe-area-inset-bottom, 0px)); background:#000; text-align:center; }
+  #intro h1 { font-size:22px; letter-spacing:.08em; margin:0; font-weight:600; }
+  #intro p { margin:0; max-width:34em; color:var(--dim); font-size:14px; line-height:1.7; }
+  #intro .go { font-size:17px; padding:16px 34px; background:#fff; color:#000; border:0; }
+  #err { color:#ff8a7a; font-size:13px; min-height:1.4em; max-width:34em; line-height:1.6; }
+
+  #panel { max-height:60vh; overflow:auto; position:fixed; left:12px; right:12px; bottom:calc(70px + env(safe-area-inset-bottom, 0px)); z-index:6;
+    background:rgba(0,0,0,.78); border:1px solid var(--line); border-radius:14px; padding:14px 16px; display:none;
+    max-width:460px; margin:0 auto; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  #panel.open { display:block; }
+  #panel label { display:grid; grid-template-columns: 7.5em 1fr 3em; align-items:center; gap:10px; font-size:13px; padding:6px 0; color:var(--dim); }
+  #panel output { text-align:right; color:var(--fg); font-variant-numeric: tabular-nums; }
+  #panel input[type=range] { width:100%; touch-action: pan-x; }
+  #panel .row { display:flex; gap:8px; padding-top:8px; flex-wrap:wrap; }
+  #panel .netbox { display:flex; flex-direction:column; gap:8px; padding:10px 0; border-top:1px solid var(--line); margin-top:6px; }
+  #panel .netbox .nt { font-size:12px; color:var(--dim); letter-spacing:.06em; }
+  #panel .netbox input { width:100%; min-width:0; background:rgba(255,255,255,.08); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:10px; font-size:16px; touch-action:auto; -webkit-user-select:text; user-select:text; }
+  #panel .netbox .row { padding-top:0; flex-wrap:nowrap; align-items:center; }
+  #panel [hidden] { display:none !important; }
+  #nStatus { font-size:12px; color:var(--dim); line-height:1.4; }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+<video id="cam" playsinline muted autoplay></video>
+
+<div id="intro">
+  <h1>空間偏好 ／ 視野 AR</h1>
+  <p>用手機後鏡頭看真實空間。畫面只有中央區是清晰的，外圍變成白色點雲；走路時視野會縮小，靠近虛擬掩體時，那一側會縮得更多。系統會依你的移動習慣，在眼前的真實空間裡長出白線構成的虛擬建築，讓你移動、躲藏。</p>
+  <p>新增：偵測與測量全部在後台運作，畫面上不再顯示線條；牆與柱上會自動出現編號標記（A-1、A-2…），走近到 1.5 公尺內、讓標記落在中央清晰區停留一下就會啟用並回報到指揮端地圖；鏡頭裡拿著手機的人會被視為其他玩家（敵人），用白框標示，被建築擋住就不顯示。
+  </p>
+  <p>原有功能：程式會先「看懂」空間——找出地板、牆、柱與轉角（單眼估計，不是 LiDAR），虛擬建築會從這些真實的牆角長出來；右上角有陀螺儀＋羅盤方位；當你忽左忽右隨機移動時，會出現 AR 懸疑場景（含聲音與震動，沒有任何攻擊判定）。</p>
+  <p>請站在空曠、安全的地方，手持手機直立，邊走邊看四周。注意腳下，不要只看螢幕走路。</p>
+  <button id="start" class="btn go">開始</button>
+  <div id="err"></div>
+</div>
+
+<div id="panel">
+  <label>中央區大小 <input id="sSize" type="range" min="0.7" max="2" step="0.05"><output id="oSize"></output></label>
+  <label>相機視角 <input id="sFov" type="range" min="45" max="90" step="1"><output id="oFov"></output></label>
+  <label>步長（公尺）<input id="sStep" type="range" min="0.4" max="1" step="0.05"><output id="oStep"></output></label>
+  <label>點雲敏感度 <input id="sDot" type="range" min="4" max="40" step="1"><output id="oDot"></output></label>
+  <label>B 距 A（公尺）<input id="sSiteL" type="range" min="2" max="8" step="0.1"><output id="oSiteL"></output></label>
+  <div class="netbox">
+    <div class="nt">連線（自架 WebSocket）</div>
+    <input id="nUrl" placeholder="伺服器網址，例如 wss://abc.trycloudflare.com" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <div class="row">
+      <input id="nRoom" placeholder="房間代碼" maxlength="16" autocapitalize="off">
+      <input id="nName" placeholder="你的名字" maxlength="12">
+    </div>
+    <input id="nToken" placeholder="暗號（伺服器有設才需要）" type="password">
+    <div class="row"><button id="bNet" class="btn">連線</button><span id="nStatus">未連線</span></div>
+  </div>
+  <div class="row">
+    <button id="bPeople" class="btn on">人物偵測</button>
+    <button id="bMkClear" class="btn">清除標記</button>
+    <button id="bObj" class="btn">物體辨識</button>
+    <button id="bSite" class="btn on">基地模型</button>
+    <button id="bScale" class="btn">以對位修正步長</button>
+  </div>
+  <div class="row">
+    <button id="bHud" class="btn">資訊文字</button>
+    <button id="bClear" class="btn">清除虛擬建築</button>
+    <button id="bGen" class="btn">立即生成一處</button>
+    <button id="bScan" class="btn">重新掃描空間</button>
+    <button id="bSus" class="btn">觸發懸疑</button>
+  </div>
+  <div class="row dev" hidden>
+    <button id="bDet" class="btn">偵測層</button>
+    <button id="bCanny" class="btn on">Canny 邊緣</button>
+    <button id="bCannyView" class="btn">顯示邊緣</button>
+    <button id="bFree" class="btn">自由生成（不依附）</button>
+  </div>
+</div>
+
+<div id="bar" hidden>
+  <button id="bAlign" class="btn">對位：站A點按我</button>
+  <button id="bCal" class="btn">校準前方</button>
+  <button id="bLimit" class="btn on">視野限制</button>
+  <button id="bWalk" class="btn">按住前進</button>
+  <button id="bSet" class="btn">設定</button>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
